@@ -7,6 +7,7 @@ import sqlite3
 import os
 import re
 import pprint
+import sys
 
 def makeDB(dbfilename, verbose):
   #Open and configure the databse if necessary
@@ -23,7 +24,8 @@ def makeDB(dbfilename, verbose):
     db.commit()
   return db
 
-def getLogFiles(bucketname, verbose):
+def getLogFiles(bucketname, test, verbose):
+  #Returns a list of files in the bucket.  If testmode is specified, only returns 10
   filelist = []
   s3 = boto3.client('s3')
   paginator = s3.get_paginator('list_objects')
@@ -31,9 +33,15 @@ def getLogFiles(bucketname, verbose):
     namelist = bucketname.split('/')
     bucketname = namelist.pop(0)
     bucketkey = '/'.join(namelist)
-    page_iterator = paginator.paginate(Bucket = bucketname, Prefix = bucketkey)
+    if test:
+      page_iterator = paginator.paginate(Bucket = bucketname, Prefix = bucketkey, PaginationConfig = {'MaxItems' : 10})
+    else:
+      page_iterator = paginator.paginate(Bucket = bucketname, Prefix = bucketkey)
   else:
-    page_iterator = paginator.paginate(Bucket = bucketname)
+    if test:
+      page_iterator = paginator.paginate(Bucket = bucketname, PaginationConfig = {'MaxItems' : 10})
+    else:
+      page_iterator = paginator.paginate(Bucket = bucketname)
   for page in page_iterator:
     for entry in page['Contents']:
       filelist.append(entry['Key'])
@@ -55,8 +63,8 @@ def logParse(data, verbose):
   quotesplit = data.split('"')
   #Start splitting on spaces
   finallist = quotesplit[0].split(' ')
-  #Put the dat back together
-  date = finallist[2] + ' ' + finallist[3]
+  #Clean up the date
+  date = finallist[2]
   date = re.sub("/", " ",date)
   date = re.sub("\[","",date)
   finallist[2] = date
@@ -70,10 +78,11 @@ def logParse(data, verbose):
   finallist.append(quotesplit[5])
   finallist.append(quotesplit[6])
   #Clean up arefacts from splitting
-  del finallist[8]
-  del finallist[10]
   del finallist[17]
+  del finallist[10]
+  del finallist[8]
 
+  #Pair the values with the column headers
   counter = 0
   for column in columns:
     parsed[column] = finallist[counter]
@@ -93,18 +102,19 @@ def main(args):
   #Get the database handle
   db = makeDB(args.database, args.verbose)
   #Get the file list from the bucket
-  filelist = getLogFiles(args.bucket, args.verbose)
-  if args.testmode:
-    filelist = filelist[:10]
+  filelist = getLogFiles(args.bucket, args.testmode, args.verbose)
   #Get the data from the log files
   counter = 1
   fullcount = len(filelist)
   for file in filelist:
     print(("Processing %s of %s") % (str(counter), str(fullcount)))
+    #Read the log file
     data = s3ReadObject(args.bucket, file, args.verbose)
+    #Parse the data out of the log file
     parseddata = logParse(data, args.verbose)
     if args.verbose:
       pprint.pprint(parseddata)
+    #Load the row into the database
     loadDatabase(parseddata, db, args.verbose)
     counter = counter + 1
 
