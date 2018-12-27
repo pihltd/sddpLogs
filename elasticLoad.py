@@ -10,6 +10,7 @@ import pprint
 import requests
 from elasticsearch import Elasticsearch
 import json
+import sys
 
 def esTest(verbose):
 #Just check to see if Elasticsearch is working
@@ -17,6 +18,7 @@ def esTest(verbose):
   pprint.pprint(results)
 
 def getLogFiles(bucketname, test, verbose):
+  #Returns a list of off the files in a bucket.  Test mode only returns 10 files
   filelist = []
   s3 = boto3.client('s3')
   paginator = s3.get_paginator('list_objects')
@@ -40,12 +42,14 @@ def getLogFiles(bucketname, test, verbose):
 
 
 def s3ReadObject(bucket, file, verbose):
+  #Reads a file stored in an S3 bucket
   s3 = boto3.resource('s3')
   obj = s3.Object(bucket, file)
   contents = obj.get()['Body'].read().decode('utf-8')
   return contents
 
 def parseDate(date):
+  #Convert the AWS format into something Elasticsearch understands as time
   months = {'Jan':'01','Feb':'02','Mar':'03','Apr':'04','May':'05','Jun':'06','Jul':'07','Aug':'08','Sep':'09','Oct':'10','Nov':'11','Dec':'12'}
   final = []
   date = re.sub("/", " ",date)
@@ -60,7 +64,7 @@ def parseDate(date):
 
   return (':').join(final)
 
-def logParse(data, verbose):
+def logParse(data, project, verbose):
   #Parses the contents of a log file and returns a dictionary
   parsed = {}
   columns = ("owner", "bucket", "time", "remote_ip", "requester", "request_id", "operation", "key", "request_uri", "http_status", "error_code", "bytes_sent", "object_size", "total_time", "turn_around_time", "referrer", "user_agent", "version_id")
@@ -77,43 +81,46 @@ def logParse(data, verbose):
   templist = quotesplit[2].split(' ')
   finallist = finallist + templist
   finallist.append(quotesplit[3])
-  #Ignore 4, it's an aretefact of the quote split
+  #Ignore 4, it's an artifact of the quote split
   finallist.append(quotesplit[5])
   finallist.append(quotesplit[6])
-  #Clean up arefacts from splitting
-  del finallist[8]
-  del finallist[10]
+  #Clean up arefacts from splitting, delete from end to avoid messing up positings
   del finallist[17]
+  del finallist[10]
+  del finallist[8]
 
+  parsed["project"] = project
   counter = 0
   for column in columns:
     parsed[column] = finallist[counter]
     counter = counter +1
 
   return parsed
+
 def createESIndex(indexname, verbose):
   mapping =''' {
   "mappings" : {
   "s3logs" : {
       "properties" : {
-         "owner" : {"type" : "text"},
-         "bucket": {"type" : "text"},
+         "project" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "owner" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "bucket": {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
          "time" : {"type" : "date", "format" : "dd:MM:yyyy:HH:mm:ss"},
          "remote_ip" : {"type" : "ip"},
-         "requester" : {"type" : "text"},
-         "request_id" : {"type" : "text"},
-         "operation" : {"type" : "text"},
-         "key" : {"type" : "text"},
-         "request_uri" : {"type" : "text"},
+         "requester" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "request_id" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "operation" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "key" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "request_uri" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
          "http_status" : {"type" : "integer"},
-         "error_code" : {"type" : "text"},
-         "bytes_sent" : {"type" : "text"},
-         "object_size" : {"type" : "text"},
+         "error_code" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "bytes_sent" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "object_size" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
          "total_time" : {"type" : "integer"},
-         "turn_around_time" : {"type" : "text"},
-         "referrer" : {"type" : "text"},
-         "user_agent" : {"type" : "text"},
-         "version_id" : {"type" : "text"}
+         "turn_around_time" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "referrer" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "user_agent" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "version_id" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}}
 
       }
     }
@@ -159,7 +166,9 @@ def main(args):
       if args.verbose:
         print(("Processing %s of %s") % (str(counter), str(fullcount)))
       data = s3ReadObject(args.bucket, file, args.verbose)
-      parseddata = logParse(data, args.verbose)
+      #Parse data into a dictionary
+      parseddata = logParse(data, args.project, args.verbose)
+      #Load the data into Elasticsearch
       loadES(args.index, parseddata, args.verbose)
       counter = counter + 1
 
@@ -170,6 +179,7 @@ if __name__ == "__main__":
   parser.add_argument("-b", "--bucket", required = True, help = "Bucket contaiins AWS log files")
   parser.add_argument("-t", "--testmode", action = "store_true", help = "Run in test mode, 10 log files only")
   parser.add_argument("-i", "--index", required = True, help = "Elasticsearch Index name")
+  parser.add_argument("-p", "--project", required = True, help = "SDD Project name")
   parser.add_argument("-d", "--delete", action = "store_true", help = "Delete the named index")
   parser.add_argument("-c", "--create", action = "store_true", help = "Create the named index")
   args = parser.parse_args()
