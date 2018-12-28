@@ -26,6 +26,7 @@ mkdir htslib
 wget ${URLH}
 tar xvjf ${NAMEH}-${VERSIONH}.tar.bz2
 cd ${NAMEH}-${VERSIONH}
+./configure --enable-libcurl --enable-gcs --enable-s3
 make
 sudo make install
 cd ..
@@ -34,6 +35,7 @@ cd ..
 wget ${URLS}
 tar xvjf ${NAMES}-${VERSIONS}.tar.bz2
 cd ${NAMES}-${VERSIONS}
+./configure --with-htslib=../${NAMEH}-${VERSIONH}
 make
 sudo make install
 cd ..
