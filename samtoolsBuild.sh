@@ -22,7 +22,6 @@ libcurl4-openssl-dev \
 libssl-dev
 
 #build htslib
-mkdir htslib
 wget ${URLH}
 tar xvjf ${NAMEH}-${VERSIONH}.tar.bz2
 cd ${NAMEH}-${VERSIONH}
