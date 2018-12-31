@@ -11,6 +11,8 @@ import requests
 from elasticsearch import Elasticsearch
 import json
 import sys
+import geoip2.database
+
 
 def esTest(verbose):
 #Just check to see if Elasticsearch is working
@@ -64,6 +66,24 @@ def parseDate(date):
 
   return (':').join(final)
 
+def ipLocation(ipaddress, verbose):
+  #Note that this is dependent on a downloaded MaxMind database.  https://dev.maxmind.com/geoip/geoip2/geolite2/
+  locdata = {}
+  reader = geoip2.database.Reader('./GeoLite2-City.mmdb')
+  try:
+    locationinfo = reader.city(ipaddress)
+    locdata['country'] = locationinfo.country.iso_code
+    locdata['city'] = locationinfo.city.name
+    locdata['lat'] = locationinfo.location.latitude
+    locdata['lon'] = locationinfo.location.longitude
+  except geoip2.errors.AddressNotFoundError as exception:
+    locdata['country'] = None
+    locdata['city'] = None
+    locdata['lat'] = None
+    locdata['lon'] = None
+  reader.close()
+  return locdata
+
 def logParse(data, project, verbose):
   #Parses the contents of a log file and returns a dictionary
   parsed = {}
@@ -89,11 +109,21 @@ def logParse(data, project, verbose):
   del finallist[10]
   del finallist[8]
 
+  #Create the final dictionary
   parsed["project"] = project
   counter = 0
   for column in columns:
     parsed[column] = finallist[counter]
     counter = counter +1
+  #Add location info for the remote_ip
+  locdata = ipLocation(parsed['remote_ip'], verbose)
+  parsed['country'] = locdata['country']
+  parsed['city'] = locdata['city']
+  #ip_location needs special handling in case of null values
+  if locdata['lat'] is None:
+    parsed['ip_location'] = None
+  else:
+    parsed['ip_location'] = {"lat" : locdata['lat'], "lon" : locdata['lon']}
 
   return parsed
 
@@ -107,6 +137,9 @@ def createESIndex(indexname, verbose):
          "bucket": {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
          "time" : {"type" : "date", "format" : "dd:MM:yyyy:HH:mm:ss"},
          "remote_ip" : {"type" : "ip"},
+         "country" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "city" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
+         "ip_location" : {"type" : "geo_point"},
          "requester" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
          "request_id" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
          "operation" : {"type" : "text", "fields" : {"raw" : {"type" : "keyword"}}},
